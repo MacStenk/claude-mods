@@ -15,5 +15,7 @@
     "codex",
     "antigravity",
     "statusline"
-  ]
+  ],
+  "privacyPolicyUrl": "https://github.com/MacStenk/claude-mods/blob/main/plugins/helfer-band/README.md#datenschutz",
+  "icon": "./.claude-plugin/icon.png"
 }

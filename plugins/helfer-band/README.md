@@ -22,7 +22,21 @@ Offen gelegt für die Prüfung und für alle, die sie installieren:
 - **Internet:** nur mit gesetzter Umgebungsvariable `HELFER_LINKS=1`. Dann lädt `/artikel` die Artikelliste von `https://stevennoack.de/index.json` und das Dashboard zeigt Links zu stevennoack.de. Ohne die Variable gibt es keinen Abruf.
 - **Knopf „Bericht öffnen“:** öffnet die `ERGEBNIS.md` eines Auftrags mit `open -a TextEdit` (macOS).
 
-Die Mod schreibt keine Dateien, schickt keine Eingaben ab und ändert keine Einstellungen.
+- **Eine Datei, die die Mod schreibt:** `~/.local/state/helfer/claude-kontingent.json` mit den Prozentwerten und Rücksetzzeiten des Claude-Kontingents (sonst nichts). Die Datei liest das optionale Skript `ki-weiche` des Nutzers. Andere Dateien schreibt die Mod nicht.
+
+### Warum die Mod Programme startet
+
+Die Prüfung von Anthropic meldet in `hooks/register.tsx` einen Programmaufruf, dessen Befehl sie nicht ganz lesen kann (Zeile mit `$.process.run([bin, '--json'])`). `bin` ist genau einer von zwei festen Pfaden: `~/.local/bin/helfer-status`, falls vorhanden, sonst `${CLAUDE_PLUGIN_ROOT}/bin/helfer-status` aus diesem Plugin. Das Argument ist immer `--json`. Der zweite Aufruf, `open -a TextEdit <Pfad>`, öffnet nur eine `ERGEBNIS.md` zum Lesen. Die Mod nimmt keine Befehle von einem Server an und reicht keine Netzwerkdaten an Programme weiter.
+
+### Was die Hooks tun
+
+- `session.start`: startet den Datenlieferanten alle 10 Sekunden und registriert die Befehle `/helfer` (und mit `HELFER_LINKS=1` auch `/artikel`).
+- `command.run` für `helfer` und `artikel`: öffnet das Dashboard bzw. die Artikelliste.
+- `ui.render` für das eigene Panel und `AbovePrompt`: zeichnet das Dashboard, die Artikelliste und das Band über dem Prompt aus den gelesenen Daten. Die Hooks lesen und verändern keine anderen Aufrufe.
+
+## Datenschutz
+
+Die Mod erhebt, speichert und überträgt keine personenbezogenen Daten. Alles bleibt auf dem eigenen Rechner. Die einzige Verbindung ins Internet ist der Abruf der öffentlichen Artikelliste `https://stevennoack.de/index.json`, und den gibt es nur mit `HELFER_LINKS=1`. Dabei werden keine Daten aus dem Rechner mitgeschickt. Die Mod schickt keine Eingaben ab und ändert keine Einstellungen.
 
 ## Voraussetzungen
 
