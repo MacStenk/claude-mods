@@ -1,9 +1,19 @@
 {
   "name": "helfer-band",
-  "version": "0.1.0",
-  "description": "Zeigt über dem Prompt laufende und kürzlich beendete helfer-Aufträge (codex, zenmux, adler, freellmapi)",
+  "version": "0.2.0",
+  "description": "Dashboard /helfer und Band über dem Prompt: Kontingente von Claude, Codex und Antigravity, FreeLLMAPI, Free Claude Code und laufende Hintergrund-Aufträge auf einen Blick",
   "types": "./types/index.d.ts",
   "author": {
     "name": "Steven Noack"
-  }
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/MacStenk/claude-mods",
+  "repository": "https://github.com/MacStenk/claude-mods",
+  "keywords": [
+    "dashboard",
+    "quota",
+    "codex",
+    "antigravity",
+    "statusline"
+  ]
 }
