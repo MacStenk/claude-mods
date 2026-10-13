@@ -1,0 +1,239 @@
+#!/usr/bin/env python3
+# helfer-status — Stand der helfer-Aufträge (Laufzeit, Tokens, letzte Protokollzeile) und Codex-Kontingent als Text oder JSON
+# Aufruf: helfer-status [--json] [--stunden N]   (Quelle: ~/.local/state/helfer/auftraege.jsonl, ~/.codex/sessions, <ordner>/.helfer.log)
+import glob, json, os, re, shutil, subprocess, sys, time
+from datetime import datetime
+
+HOME = os.path.expanduser("~")
+REG = os.path.join(HOME, ".local/state/helfer/auftraege.jsonl")
+SESS = os.path.join(HOME, ".codex/sessions")
+RAUSCHEN = re.compile(r"rmcp|deprecated|is ignored|^hook:|^\s*$|^tokens used$|^[\d.,]+$|root agent idle|waiting up to")
+
+
+def tail(pfad, n=400_000):
+    try:
+        with open(pfad, "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - n))
+            return f.read().decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
+def auftraege(stunden):
+    if not os.path.exists(REG):
+        return None
+    nun = time.time()
+    by = {}
+    try:
+        zeilen = open(REG, encoding="utf-8").read().splitlines()
+    except OSError:
+        return None
+    for z in zeilen:
+        try:
+            d = json.loads(z)
+        except ValueError:
+            continue
+        i = d.get("id")
+        if not i:
+            continue
+        if "start" in d:
+            by[i] = {**by.get(i, {}), **d, "ende": by.get(i, {}).get("ende"), "rc": by.get(i, {}).get("rc")}
+        elif "ende" in d and i in by:
+            by[i]["ende"], by[i]["rc"] = d["ende"], d.get("rc")
+    return [a for a in by.values() if nun - (a.get("ende") or a["start"]) < stunden * 3600]
+
+
+def codex_sitzungen(ab):
+    """Codex-Sitzungsdateien ab Zeitpunkt ab (Sekunden), neueste zuerst."""
+    if not os.path.isdir(SESS):
+        return []
+    tage = {datetime.fromtimestamp(ab).strftime("%Y/%m/%d"), datetime.now().strftime("%Y/%m/%d")}
+    dateien = []
+    for t in tage:
+        dateien += glob.glob(os.path.join(SESS, t, "*.jsonl"))
+    return sorted((f for f in dateien if os.path.getmtime(f) >= ab), key=os.path.getmtime, reverse=True)
+
+
+def sitzung_infos(pfad):
+    kopf = ""
+    try:
+        with open(pfad, encoding="utf-8", errors="replace") as f:
+            kopf = f.readline()
+    except OSError:
+        pass
+    cwd = (re.search(r'"cwd":"([^"]+)"', kopf) or [None, None])[1]
+    start = re.search(r'"timestamp":"([^"]+)"', kopf)
+    start = datetime.fromisoformat(start[1].replace("Z", "+00:00")).timestamp() if start else 0
+    ende = tail(pfad)
+    tok = re.findall(r'"total_token_usage":\{[^}]*"total_tokens":(\d+)', ende)
+    runden = len(re.findall(r'"type":"token_count"', ende))
+    limits = re.findall(r'"rate_limits":\{"limit_id":"codex".*?"primary":\{"used_percent":([\d.]+),"window_minutes":\d+,"resets_at":(\d+)\},"secondary":\{"used_percent":([\d.]+),"window_minutes":\d+,"resets_at":(\d+)\}', ende)
+    return {"cwd": cwd, "start": start, "tokens": int(tok[-1]) if tok else None, "runden": runden, "limits": limits[-1] if limits else None}
+
+
+def letzte_zeile(ordner):
+    if not ordner or not os.path.isdir(ordner):
+        return ""
+    for z in reversed(tail(os.path.join(ordner, ".helfer.log"), 60_000).splitlines()):
+        z = z.strip()
+        if z and not RAUSCHEN.search(z):
+            return z[:160]
+    return ""
+
+
+FLA_DB = os.path.join(HOME, "Library/Application Support/FreeLLMAPI/freeapi.db")
+NAMEN = {"custom": "eigene (ZenMux)", "ollama": "Ollama", "zhipu": "Zhipu"}
+
+
+def sql(abfrage):
+    if not os.path.exists(FLA_DB) or not shutil.which("sqlite3"):
+        return []
+    try:
+        r = subprocess.run(["sqlite3", "-readonly", "-json", FLA_DB, abfrage], capture_output=True, text=True, timeout=10)
+        return json.loads(r.stdout or "[]")
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return []
+
+
+def freellmapi():
+    """Je Anbieter: aktive Schlüssel, Anfragen und Tokens heute, laufende Sperren (Quelle: FreeLLMAPI-Datenbank, nur lesend)."""
+    if not os.path.exists(FLA_DB) or not shutil.which("sqlite3"):
+        return None
+    heute = "created_at >= date('now','localtime','start of day','utc')"
+    by = {}
+    keys = sql("SELECT platform, enabled, status FROM api_keys")
+    if not keys:
+        return None
+    for k in keys:
+        a = by.setdefault(k["platform"], {"anbieter": NAMEN.get(k["platform"], k["platform"]), "schluessel": 0, "aktiv": 0, "ok": 0, "anfragen": 0, "tokens": 0, "sperren": 0, "ok_stunde": 0, "anfragen_stunde": 0})
+        a["schluessel"] += 1
+        a["aktiv"] += 1 if k["enabled"] else 0
+    for r in sql(f"SELECT platform, sum(status='success') ok, count(*) n, sum(coalesce(input_tokens,0)+coalesce(output_tokens,0)) t FROM requests WHERE {heute} GROUP BY platform"):
+        if r["platform"] in by:
+            by[r["platform"]].update(ok=r["ok"] or 0, anfragen=r["n"] or 0, tokens=r["t"] or 0)
+    for r in sql("SELECT platform, sum(status='success') ok, count(*) n FROM requests WHERE created_at >= datetime('now','-1 hour') GROUP BY platform"):
+        if r["platform"] in by:
+            by[r["platform"]].update(ok_stunde=r["ok"] or 0, anfragen_stunde=r["n"] or 0)
+    for r in sql("SELECT platform, count(*) n FROM rate_limit_cooldowns WHERE expires_at_ms > strftime('%s','now')*1000 GROUP BY platform"):
+        if r["platform"] in by:
+            by[r["platform"]]["sperren"] = r["n"]
+    katalog = sql("SELECT count(DISTINCT platform) n FROM models")
+    return {"anbieter": sorted(by.values(), key=lambda a: -a["anfragen"]), "im_katalog": katalog[0]["n"] if katalog else None}
+
+
+AGY_CACHE = os.path.join(HOME, ".local/state/helfer/agy-usage.json")
+
+
+def agy_kontingent(max_alter=120):
+    """Antigravity-Abo: verbleibender Anteil je Modellgruppe und Fenster (agy -p /usage, verbraucht kein Kontingent), 2 Min. zwischengespeichert."""
+    try:
+        if time.time() - os.path.getmtime(AGY_CACHE) < max_alter:
+            return json.load(open(AGY_CACHE))
+    except (OSError, ValueError):
+        pass
+    if not os.path.isdir(os.path.join(HOME, ".gemini")) or not shutil.which("agy"):
+        return None
+    try:
+        r = subprocess.run(["agy", "-p", "/usage", "--output-format", "json"], capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL)
+        gruppen = json.loads(r.stdout)["command"]["data"]["groups"]
+    except (OSError, ValueError, KeyError, subprocess.TimeoutExpired):
+        return None
+    out = [{"gruppe": g["name"], "fenster": b["window"], "rest": round(b["remaining_fraction"] * 100, 1), "reset": b.get("reset_time")} for g in gruppen for b in g.get("buckets", [])]
+    try:
+        os.makedirs(os.path.dirname(AGY_CACHE), exist_ok=True)
+        json.dump(out, open(AGY_CACHE, "w"))
+    except OSError:
+        pass
+    return out
+
+
+def weiche():
+    """Was ki-weiche gerade für Schreiben und Bauen wählen würde (ohne Tokens).
+    ki-weiche ruft selbst helfer-status auf: HELFER_STATUS_INNEN verhindert die Schleife."""
+    if os.environ.get("HELFER_STATUS_INNEN"):
+        return None
+    weiche_bin = os.path.join(os.path.dirname(os.path.realpath(__file__)), "ki-weiche")
+    if not os.path.exists(weiche_bin):
+        local_weiche = os.path.join(HOME, ".local/bin/ki-weiche")
+        if os.path.exists(local_weiche):
+            weiche_bin = local_weiche
+        else:
+            return None
+    out = {}
+    for art in ("schreiben", "bauen"):
+        try:
+            r = subprocess.run([weiche_bin, "--art", art, "--json"], capture_output=True, text=True, timeout=60, env={**os.environ, "HELFER_STATUS_INNEN": "1"})
+            out[art] = json.loads(r.stdout) if r.stdout.strip() else {"ziel": "keins", "grund": r.stderr.strip()[:120]}
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            out[art] = None
+    if not any(out.values()):
+        return None
+    return out
+
+
+def zahl(n):
+    return f"{n:,}".replace(",", ".")
+
+
+def main():
+    als_json = "--json" in sys.argv
+    stunden = float(sys.argv[sys.argv.index("--stunden") + 1]) if "--stunden" in sys.argv else 24
+    liste = auftraege(stunden)
+    ab = time.time() - 6 * 3600 - 60
+    if liste:
+        ab = min([a["start"] for a in liste] + [time.time() - 6 * 3600]) - 60
+    sitzungen = [dict(sitzung_infos(f), datei=f) for f in codex_sitzungen(ab)]
+    out_auftraege = None
+    if liste is not None:
+        for a in liste:
+            a["tokens"] = a["runden"] = None
+            if a.get("wer") in ("codex", "zenmux", "freellmapi"):
+                passend = [s for s in sitzungen if s["cwd"] == a.get("ordner") and a["start"] - 60 <= s["start"] <= (a.get("ende") or time.time())]
+                if passend:
+                    a["tokens"], a["runden"] = passend[-1]["tokens"], passend[-1]["runden"]
+            a["letzte_zeile"] = letzte_zeile(a.get("ordner", ""))
+        out_auftraege = sorted(liste, key=lambda a: -a["start"])
+    kont = None
+    for s in sitzungen:
+        if s["limits"]:
+            p, pr, w, wr = s["limits"]
+            kont = {"fenster_prozent": float(p), "fenster_reset": int(pr), "woche_prozent": float(w), "woche_reset": int(wr)}
+            if kont["fenster_reset"] <= time.time():
+                kont["fenster_prozent"] = 0.0
+            if kont["woche_reset"] <= time.time():
+                kont["woche_prozent"] = 0.0
+            break
+    out = {"jetzt": int(time.time()), "kontingent": {"codex": kont, "agy": agy_kontingent()}, "freellmapi": freellmapi(), "weiche": weiche(), "auftraege": out_auftraege}
+    if als_json:
+        print(json.dumps(out, ensure_ascii=False))
+        return
+    if kont:
+        print(f"Codex-Abo: 5h-Fenster {kont['fenster_prozent']:.0f} % (frei ab {datetime.fromtimestamp(kont['fenster_reset']):%H:%M}), Woche {kont['woche_prozent']:.0f} %")
+    else:
+        print("Codex-Abo: nicht eingerichtet")
+    if out["kontingent"]["agy"]:
+        for b in out["kontingent"]["agy"]:
+            print(f"Antigravity {b['gruppe']}, {b['fenster']}: {b['rest']:.0f} % übrig")
+    else:
+        print("Antigravity: nicht eingerichtet")
+    fla = out["freellmapi"]
+    if fla and fla["anbieter"]:
+        print(f"FreeLLMAPI ({len(fla['anbieter'])} von {fla['im_katalog']} Anbietern eingerichtet):")
+        for a in fla["anbieter"]:
+            print(f"  {a['anbieter']:16} {a['aktiv']}/{a['schluessel']} aktiv, heute {a['ok']}/{a['anfragen']} ok, {zahl(a['tokens'])} Tokens" + (f", {a['sperren']} Modelle gesperrt" if a["sperren"] else ""))
+    else:
+        print("FreeLLMAPI: nicht eingerichtet")
+    if out["auftraege"] is None:
+        print("Aufträge: nicht eingerichtet")
+    elif not out["auftraege"]:
+        print("Aufträge: keine in den letzten 24 Stunden")
+    else:
+        for a in out["auftraege"]:
+            zustand = "läuft" if a.get("ende") is None else ("fertig" if a.get("rc") == 0 else f"Fehler {a.get('rc')}")
+            tok = f", {zahl(a['tokens'])} Tokens" if a.get("tokens") else ""
+            print(f"{a['wer']:10} {os.path.basename(a.get('ordner', '')):14} {a.get('auftrag', ''):28} {zustand}{tok}")
+
+
+if __name__ == "__main__":
+    main()

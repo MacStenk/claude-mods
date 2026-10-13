@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "stevennoack-mods",
+  "description": "Erweiterungen und Mods für Claude Code von Steven Noack",
+  "owner": {
+    "name": "Steven Noack"
+  },
+  "plugins": [
+    {
+      "name": "helfer-band",
+      "source": "./plugins/helfer-band",
+      "description": "Zeigt über dem Prompt laufende und kürzlich beendete helfer-Aufträge (codex, zenmux, adler, freellmapi)"
+    }
+  ]
+}

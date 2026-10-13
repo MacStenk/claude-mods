@@ -1,0 +1,9 @@
+{
+  "name": "helfer-band",
+  "version": "0.1.0",
+  "description": "Zeigt über dem Prompt laufende und kürzlich beendete helfer-Aufträge (codex, zenmux, adler, freellmapi)",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Steven Noack"
+  }
+}
