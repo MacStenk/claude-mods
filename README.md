@@ -16,6 +16,7 @@ Claude-Code-Plugin mit Dashboard (`/helfer`) und Statusband über dem Prompt fü
 - **Codex-Abo (OpenAI):** 5-Stunden- und Wochenauslastung aus lokalen Sitzungen.
 - **Antigravity / agy (Google-Abo):** Verbleibende Kontingente je Modellgruppe und Fenster.
 - **FreeLLMAPI:** Lokale Anbieter, aktive Schlüssel, Anfragen, Tokens und Modell-Sperren.
+- **Free Claude Code:** ob der lokale Proxy läuft, gewähltes Modell, bereite und beim Start fehlgeschlagene Anbieter, Link zur Verwaltung (Port per `FCC_PORT`, Standard 8082).
 - **Aufträge (24 Std.):** Zuletzt gelaufene und aktive Aufträge mit Status (⚙ läuft / ✓ fertig / ✗ Fehler), Dauer, Tokens und Knopf zum Öffnen des Berichts (`ERGEBNIS.md`).
 - **Über dem Prompt:** Kompaktes Band der letzten aktiven/beendeten Aufträge direkt in der Eingabezeile.
 
@@ -33,6 +34,7 @@ Wird die Umgebungsvariable `HELFER_LINKS=1` gesetzt, blendet das Dashboard zusä
 - OpenAI Codex CLI (`codex`)
 - Google Antigravity CLI (`agy`)
 - FreeLLMAPI (lokale SQLite-Datenbank)
+- Free Claude Code (`fcc-server`, liest nur `/admin/api/status`, keine Schlüssel)
 - Helfer-Auftragsregister (`~/.local/state/helfer/auftraege.jsonl`)
 
 Fehlt ein optionaler Dienst, zeigt der entsprechende Abschnitt im Dashboard sauber `nicht eingerichtet` an, ohne Fehlermeldung oder Absturz.

@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { ArtikelEintrag, Auftrag, Fenster, Stand } from '../types'
+import type { ArtikelEintrag, Auftrag, FccStand, Fenster, Stand } from '../types'
 
 const auftraege = atom({ plugin: 'helfer-band', key: 'auftraege' } as const, [] as Auftrag[])
 const jetzt = atom({ plugin: 'helfer-band', key: 'jetzt' } as const, 0)
@@ -81,6 +81,28 @@ export function empfehlung(st: Stand, cl: Fenster[]): string[] {
 
 export function zahl(n: number): string {
   return n.toLocaleString('de-DE')
+}
+
+export type FccZeile = {
+  text: string
+  farbe?: 'green' | 'red'
+  dim?: boolean
+}
+
+export function fccZeilen(fcc: FccStand | null | undefined): FccZeile[] {
+  if (!fcc) {
+    return [{ text: 'nicht gestartet (App ‚Free Claude Code‘ oder `fcc-server`)', dim: true }]
+  }
+  const zeilen: FccZeile[] = []
+  zeilen.push({ text: `${fcc.laeuft ? 'läuft' : 'gestoppt'}${fcc.modell ? ` · Modell ${fcc.modell}` : ''}` })
+  if (fcc.bereit && fcc.bereit.length > 0) {
+    zeilen.push({ text: `bereit: ${fcc.bereit.join(', ')}`, farbe: 'green' })
+  }
+  if (fcc.fehler && fcc.fehler.length > 0) {
+    zeilen.push({ text: `Start fehlgeschlagen: ${fcc.fehler.join(', ')}`, farbe: 'red' })
+  }
+  zeilen.push({ text: `${fcc.eingerichtet} Anbieter eingerichtet, ${fcc.modelle} Modelle` })
+  return zeilen
 }
 
 function uhr(ts: number): string {
@@ -221,6 +243,7 @@ export const register: Register = on => {
     const cl = await read($, claude)
     const farbe = (p: number) => (p >= 90 ? 'red' : p >= 70 ? 'yellow' : 'green')
     const name: Record<string, string> = { five_hour: '5-Std.-Fenster', seven_day: 'Woche         ' }
+    const port = String(st.fcc?.port || (await $.env.get('FCC_PORT')) || '8082')
     const linksAktiv = Boolean(await $.env.get('HELFER_LINKS'))
     return (
       <Box flexDirection="column" gap={1}>
@@ -280,6 +303,15 @@ export const register: Register = on => {
               </Text>
             )
           })}
+        </Box>
+        <Box flexDirection="column" borderStyle="round" paddingX={1}>
+          <Box flexDirection="row" gap={2}>
+            <Text bold>Free Claude Code (127.0.0.1:{port})</Text>
+            <Link href={`http://127.0.0.1:${port}/admin`}>Admin</Link>
+          </Box>
+          {fccZeilen(st.fcc).map((z, idx) => (
+            <Text key={String(idx)} color={z.farbe} dimColor={z.dim}>{z.text}</Text>
+          ))}
         </Box>
         <Box flexDirection="column" borderStyle="round" paddingX={1}>
           <Text bold>Aufträge (24 Std.)</Text>

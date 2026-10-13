@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # helfer-status — Stand der helfer-Aufträge (Laufzeit, Tokens, letzte Protokollzeile) und Codex-Kontingent als Text oder JSON
 # Aufruf: helfer-status [--json] [--stunden N]   (Quelle: ~/.local/state/helfer/auftraege.jsonl, ~/.codex/sessions, <ordner>/.helfer.log)
-import glob, json, os, re, shutil, subprocess, sys, time
+import glob, json, os, re, shutil, subprocess, sys, time, urllib.request
 from datetime import datetime
 
 HOME = os.path.expanduser("~")
@@ -172,6 +172,37 @@ def weiche():
     return out
 
 
+def fcc(daten=None):
+    """Free Claude Code (FCC) Status über GET http://127.0.0.1:<port>/admin/api/status abfragen."""
+    if daten is None:
+        port = os.environ.get("FCC_PORT", "8082")
+        url = f"http://127.0.0.1:{port}/admin/api/status"
+        try:
+            req = urllib.request.Request(url, headers={"Accept": "application/json"})
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            with opener.open(req, timeout=2) as resp:
+                daten = json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            return None
+    if not isinstance(daten, dict):
+        return None
+    startup = (daten.get("startup") or {}).get("providers") or {}
+    provider_status = daten.get("provider_status") or []
+    cached = daten.get("cached_models") or {}
+    modelle = sum(
+        v if isinstance(v, int) else (len(v) if hasattr(v, "__len__") else 0)
+        for v in cached.values()
+    )
+    return {
+        "laeuft": daten.get("status") == "running",
+        "modell": str(daten.get("model") or ""),
+        "bereit": [k for k, v in startup.items() if v == "ready"],
+        "fehler": [k for k, v in startup.items() if v == "failed"],
+        "eingerichtet": sum(1 for p in provider_status if isinstance(p, dict) and p.get("status") == "configured"),
+        "modelle": modelle,
+    }
+
+
 def zahl(n):
     return f"{n:,}".replace(",", ".")
 
@@ -204,7 +235,7 @@ def main():
             if kont["woche_reset"] <= time.time():
                 kont["woche_prozent"] = 0.0
             break
-    out = {"jetzt": int(time.time()), "kontingent": {"codex": kont, "agy": agy_kontingent()}, "freellmapi": freellmapi(), "weiche": weiche(), "auftraege": out_auftraege}
+    out = {"jetzt": int(time.time()), "kontingent": {"codex": kont, "agy": agy_kontingent()}, "freellmapi": freellmapi(), "fcc": fcc(), "weiche": weiche(), "auftraege": out_auftraege}
     if als_json:
         print(json.dumps(out, ensure_ascii=False))
         return
@@ -224,6 +255,14 @@ def main():
             print(f"  {a['anbieter']:16} {a['aktiv']}/{a['schluessel']} aktiv, heute {a['ok']}/{a['anfragen']} ok, {zahl(a['tokens'])} Tokens" + (f", {a['sperren']} Modelle gesperrt" if a["sperren"] else ""))
     else:
         print("FreeLLMAPI: nicht eingerichtet")
+    fc = out["fcc"]
+    if fc:
+        zustand = "läuft" if fc["laeuft"] else "gestoppt"
+        bereit = f", bereit: {', '.join(fc['bereit'])}" if fc["bereit"] else ""
+        fehler = f", Start fehlgeschlagen: {', '.join(fc['fehler'])}" if fc["fehler"] else ""
+        print(f"Free Claude Code: {zustand}, Modell {fc['modell']}{bereit}{fehler} ({fc['eingerichtet']} Anbieter eingerichtet, {fc['modelle']} Modelle)")
+    else:
+        print("Free Claude Code: nicht gestartet")
     if out["auftraege"] is None:
         print("Aufträge: nicht eingerichtet")
     elif not out["auftraege"]:
